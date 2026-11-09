@@ -7,9 +7,11 @@ YouTube, SoundCloud, TikTok, Instagram, VK и ещё ~1800 сайтов (yt-dlp)
 Интерактивный интерфейс: выбор качества, выбор видео из плейлиста.
 """
 
+import logging
 import os
 import shutil
 import sys
+from logging.handlers import RotatingFileHandler
 
 import yt_dlp
 from yt_dlp.utils import DownloadError
@@ -50,8 +52,28 @@ BANNER = r"""
       youtube • soundcloud • tiktok • instagram • vk • ещё ~1800 сайтов
 """
 
-OUT_DIR = "downloads"
+# Папки: логи — в %APPDATA%, загрузки — в системной папке Downloads
+APPDATA = os.environ.get("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+DATA_DIR = os.path.join(APPDATA, "Exolim-DL")
+LOG_DIR = os.path.join(DATA_DIR, "logs")
+OUT_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "Exolim-DL")
+
 AUTH = {}  # сюда кладём cookies-опции после запроса у пользователя
+
+log = logging.getLogger("exolim")
+
+
+def setup_logging():
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log.setLevel(logging.INFO)
+    if not log.handlers:
+        fh = RotatingFileHandler(
+            os.path.join(LOG_DIR, "exolim.log"),
+            maxBytes=2_000_000, backupCount=3, encoding="utf-8",
+        )
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(fh)
+
 
 BROWSERS = {"chrome", "firefox", "edge", "brave", "opera", "vivaldi", "chromium", "safari"}
 
@@ -185,8 +207,10 @@ def download(urls, fmt, to_mp3):
         for u in urls:
             try:
                 ydl.download([u])
+                log.info("downloaded: %s", u)
             except DownloadError as e:
                 errors.append(e)
+                log.warning("download failed: %s — %s", u, e)
                 print(f"\n{C['red']}Пропущено: {e}{C['reset']}")
     if errors and len(urls) == 1:
         raise errors[0]
@@ -376,6 +400,7 @@ def handle_playlist(info):
     parent_key = info.get("extractor_key") or ""
     urls = [entry_url(entries[i], parent_key) for i in sel]
     urls = [u for u in urls if u]
+    log.info("playlist '%s': %d entries, selected %d", title, len(entries), len(urls))
     print(f"{C['green']}Выбрано: {len(urls)} видео{C['reset']}")
     return site_key(info), urls
 
@@ -394,12 +419,14 @@ def pick_format(site):
 
 
 def process_url(url):
+    log.info("new request: %s", url)
     opts = base_opts()
     opts["extract_flat"] = "in_playlist"  # плейлист — только список, без распаковки
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     if not info:
+        log.warning("no info for url: %s", url)
         print(f"{C['red']}Не удалось получить информацию по ссылке.{C['reset']}")
         return
 
@@ -413,10 +440,12 @@ def process_url(url):
     else:
         show_video_info(info)
         site, urls = site_key(info), [url]
+        log.info("video '%s' [%s] site=%s", info.get("title"), info.get("id"), site)
 
     fmt, to_mp3 = pick_format(site)
     if fmt is None:
         return
+    log.info("format=%s mp3=%s targets=%d out=%s", fmt, to_mp3, len(urls), OUT_DIR)
 
     print(f"\n{C['green']}Скачиваю {len(urls)} файл(ов)…{C['reset']}  {C['dim']}→ {OUT_DIR}/{C['reset']}")
     download(urls, fmt, to_mp3)
@@ -428,7 +457,10 @@ def process_url(url):
 # ------------------------------------------------------------------
 
 def main():
+    setup_logging()
     os.makedirs(OUT_DIR, exist_ok=True)
+    log.info("=== Exolim DL start === frozen=%s yt-dlp=%s",
+             getattr(sys, "frozen", False), yt_dlp.version.__version__)
 
     if os.name == "nt":
         os.system("cls")
@@ -451,6 +483,7 @@ def main():
         try:
             process_url(url)
         except DownloadError as e:
+            log.warning("download error for %s: %s", url, e)
             msg = str(e)
             if looks_like_auth_error(msg) and not AUTH:
                 ask_cookies()
@@ -464,6 +497,7 @@ def main():
         except KeyboardInterrupt:
             print(f"\n{C['yellow']}Отменено.{C['reset']}")
         except Exception as e:
+            log.exception("unexpected error")
             print(f"\n{C['red']}Ошибка: {e}{C['reset']}")
 
         input(f"\n{C['dim']}Enter — продолжить …{C['reset']}")
@@ -475,6 +509,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:  # чтобы окно exe не закрывалось при падении
+        log.exception("fatal error")
         print(f"\n{C['red']}Критическая ошибка: {e}{C['reset']}")
         try:
             input("Enter для выхода")
