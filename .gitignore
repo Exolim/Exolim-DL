@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.spec
+build/
+dist/
+
+# Скачанное
+/downloads/
+*.mp3
+*.mp4
+*.m4a
+*.webp
+*.part
+
+# Exe не коммитим — собирается через build.bat и кладётся в GitHub Releases
+/releases/*.exe
